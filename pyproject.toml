@@ -1,0 +1,28 @@
+[project]
+name = "mcaddon-tools"
+version = "0.1.0"
+description = "CLI tools for Minecraft Bedrock addon development with Dropbox sync to iPad"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+license = "AGPL-3.0-or-later"
+authors = [
+  { name = "Minecraft Addon Tools Contributors" }
+]
+keywords = ["minecraft", "bedrock", "addon", "mcaddon", "development"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Games/Entertainment",
+  "Topic :: Software Development :: Build Tools",
+]
+
+[project.scripts]
+mcaddon = "mcaddon_tools.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/yourusername/mcaddon-tools"
+Issues = "https://github.com/yourusername/mcaddon-tools/issues"
