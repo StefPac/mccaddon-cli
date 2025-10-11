@@ -9,19 +9,12 @@ This toolset provides a streamlined workflow for developing Minecraft Bedrock ad
 ## Tools
 
 - **mcaddon** - Main CLI tool for addon management
-- **validate-json.sh** - Validates JSON files in addon directories
-- **package-addon.sh** - Packages addons into .mcaddon and .mcpack files
 
 ## Requirements
 
 - Python 3.12+
-- `zip`, `jq`, `inotify-tools` (installed via your package manager)
+- `zip` command (standard on macOS and Linux)
 - Dropbox (optional, for iPad sync)
-
-On Debian/Ubuntu:
-```bash
-sudo apt install zip jq inotify-tools python3 python3-pip
-```
 
 ## Installation
 
@@ -120,7 +113,6 @@ Available Addons
 
 ```
 ~/minecraft-addons/
-├── tools/              # This toolset
 ├── builds/             # Local builds (--local flag)
 ├── my_addon/           # Your addon projects
 ├── another_addon/
@@ -179,14 +171,9 @@ Each pack requires a `manifest.json` with unique UUIDs (automatically generated 
 
 ### JSON Validation Errors
 
-Manually validate:
+JSON validation is automatic during build. Check specific file manually:
 ```bash
-validate-json.sh ~/minecraft-addons/my_addon
-```
-
-Or check specific file:
-```bash
-jq empty ~/minecraft-addons/my_addon/behavior_pack/manifest.json
+python -m json.tool ~/minecraft-addons/my_addon/behavior_pack/manifest.json
 ```
 
 ### Dropbox Not Syncing
@@ -210,25 +197,9 @@ dropbox start
 4. Force refresh Files app on iPad
 5. Check Minecraft version matches `min_engine_version`
 
-### Watch Mode Not Working
+### Watch Mode Not Detecting Changes
 
-Ensure `inotify-tools` is installed:
-```bash
-sudo apt install inotify-tools
-```
-
-Test manually:
-```bash
-inotifywait -r -e modify ~/minecraft-addons/my_addon
-```
-
-## Requirements
-
-- Python 3.6+
-- zip
-- jq
-- inotify-tools
-- Dropbox (optional, for iPad sync)
+Watch mode uses file modification time polling (checks every 2 seconds). If changes aren't detected immediately, wait a moment - the tool will pick them up on the next poll.
 
 ## Tips
 

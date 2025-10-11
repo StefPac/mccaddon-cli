@@ -7,8 +7,10 @@ Unified CLI for creating, building, and transferring addons from Linux to iPad v
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -17,9 +19,14 @@ from typing import Optional
 # Configuration
 HOME = Path.home()
 ADDONS_DIR = HOME / "minecraft-addons"
-TOOLS_DIR = ADDONS_DIR / "tools"
 BUILDS_DIR = ADDONS_DIR / "builds"
 DROPBOX_DIR = HOME / "Dropbox" / "Minecraft"
+
+# Constants
+PACK_TYPE_BEHAVIOR = "behavior"
+PACK_TYPE_RESOURCE = "resource"
+MODULE_TYPE_DATA = "data"
+MODULE_TYPE_RESOURCES = "resources"
 
 class Colors:
     """ANSI color codes for terminal output"""
@@ -30,19 +37,18 @@ class Colors:
     RESET = '\033[0m'
     BOLD = '\033[1m'
 
-def print_success(msg: str):
-    print(f"{Colors.GREEN}✓{Colors.RESET} {msg}")
+def print_msg(msg: str, msg_type: str = "info"):
+    """Print formatted message based on type"""
+    formats = {
+        "success": (f"{Colors.GREEN}✓{Colors.RESET} {msg}", None),
+        "error": (f"{Colors.RED}✗{Colors.RESET} {msg}", sys.stderr),
+        "info": (f"{Colors.BLUE}ℹ{Colors.RESET} {msg}", None),
+        "header": (f"\n{Colors.BOLD}{msg}{Colors.RESET}", None),
+    }
+    text, file = formats[msg_type]
+    print(text, file=file)
 
-def print_error(msg: str):
-    print(f"{Colors.RED}✗{Colors.RESET} {msg}", file=sys.stderr)
-
-def print_info(msg: str):
-    print(f"{Colors.BLUE}ℹ{Colors.RESET} {msg}")
-
-def print_header(msg: str):
-    print(f"\n{Colors.BOLD}{msg}{Colors.RESET}")
-
-def run_command(cmd: list, check=True, capture=False) -> Optional[str]:
+def run_command(cmd: list, check: bool = True, capture: bool = False) -> Optional[str]:
     """Run a shell command"""
     try:
         if capture:
@@ -53,17 +59,85 @@ def run_command(cmd: list, check=True, capture=False) -> Optional[str]:
             return None
     except subprocess.CalledProcessError as e:
         if check:
-            print_error(f"Command failed: {' '.join(cmd)}")
+            print_msg(f"Command failed: {' '.join(cmd)}", "error")
             sys.exit(1)
         return None
+
+def validate_json_files(addon_path: Path) -> bool:
+    """Validate all JSON files in addon directory"""
+    json_files = list(addon_path.rglob("*.json"))
+
+    if not json_files:
+        print_msg("No JSON files found")
+        return True
+
+    all_valid = True
+    for json_file in json_files:
+        try:
+            with open(json_file, 'r') as f:
+                json.load(f)
+        except json.JSONDecodeError as e:
+            print_msg(f"Invalid JSON in {json_file.relative_to(addon_path)}: {e}", "error")
+            all_valid = False
+
+    if all_valid:
+        print_msg("All JSON files valid", "success")
+
+    return all_valid
+
+def package_addon(addon_path: Path, output_dir: Path, addon_name: str) -> Path:
+    """Package addon into .mcaddon and .mcpack files using zip command"""
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmppath = Path(tmpdir)
+
+        # Copy packs to temp directory
+        bp_path = addon_path / "behavior_pack"
+        rp_path = addon_path / "resource_pack"
+
+        if bp_path.exists():
+            shutil.copytree(bp_path, tmppath / "behavior_pack")
+        if rp_path.exists():
+            shutil.copytree(rp_path, tmppath / "resource_pack")
+
+        # Create .mcaddon (both packs)
+        mcaddon_file = output_dir / f"{addon_name}.mcaddon"
+        subprocess.run(["zip", "-qr", str(mcaddon_file), "."], cwd=tmppath, check=True)
+
+        # Create individual .mcpack files
+        if bp_path.exists():
+            bp_mcpack = output_dir / f"{addon_name}_BP.mcpack"
+            subprocess.run(["zip", "-qr", str(bp_mcpack), "."],
+                         cwd=tmppath / "behavior_pack", check=True)
+
+        if rp_path.exists():
+            rp_mcpack = output_dir / f"{addon_name}_RP.mcpack"
+            subprocess.run(["zip", "-qr", str(rp_mcpack), "."],
+                         cwd=tmppath / "resource_pack", check=True)
+
+    return mcaddon_file
 
 def generate_uuid() -> str:
     """Generate a lowercase UUID"""
     return str(uuid.uuid4())
 
+def resolve_addon_path(name: str, custom_path: Optional[str] = None) -> Path:
+    """Resolve addon path from name or custom path"""
+    if custom_path:
+        addon_path = Path(custom_path)
+    else:
+        addon_path = ADDONS_DIR / name
+
+    if not addon_path.exists():
+        print_msg(f"Addon not found: {addon_path}", "error")
+        sys.exit(1)
+
+    return addon_path
+
 def create_manifest(pack_type: str, addon_name: str) -> dict:
     """Create a manifest.json structure"""
-    is_behavior = pack_type == "behavior"
+    is_behavior = pack_type == PACK_TYPE_BEHAVIOR
     return {
         "format_version": 2,
         "header": {
@@ -75,7 +149,7 @@ def create_manifest(pack_type: str, addon_name: str) -> dict:
         },
         "modules": [
             {
-                "type": "data" if is_behavior else "resources",
+                "type": MODULE_TYPE_DATA if is_behavior else MODULE_TYPE_RESOURCES,
                 "uuid": generate_uuid(),
                 "version": [1, 0, 0]
             }
@@ -88,10 +162,10 @@ def init_addon(args):
     addon_path = ADDONS_DIR / addon_name
 
     if addon_path.exists():
-        print_error(f"Addon '{addon_name}' already exists at {addon_path}")
+        print_msg(f"Addon '{addon_name}' already exists at {addon_path}", "error")
         sys.exit(1)
 
-    print_header(f"Initializing addon: {addon_name}")
+    print_msg(f"Initializing addon: {addon_name}", "header")
 
     # Create directory structure
     bp_path = addon_path / "behavior_pack"
@@ -108,8 +182,8 @@ def init_addon(args):
         (rp_path / subdir).mkdir()
 
     # Create manifests
-    bp_manifest = create_manifest("behavior", addon_name)
-    rp_manifest = create_manifest("resource", addon_name)
+    bp_manifest = create_manifest(PACK_TYPE_BEHAVIOR, addon_name)
+    rp_manifest = create_manifest(PACK_TYPE_RESOURCE, addon_name)
 
     with open(bp_path / "manifest.json", 'w') as f:
         json.dump(bp_manifest, f, indent=2)
@@ -117,9 +191,9 @@ def init_addon(args):
     with open(rp_path / "manifest.json", 'w') as f:
         json.dump(rp_manifest, f, indent=2)
 
-    print_success(f"Addon initialized at {addon_path}")
-    print_info(f"Behavior Pack UUID: {bp_manifest['header']['uuid']}")
-    print_info(f"Resource Pack UUID: {rp_manifest['header']['uuid']}")
+    print_msg(f"Addon initialized at {addon_path}", "success")
+    print_msg(f"Behavior Pack UUID: {bp_manifest['header']['uuid']}")
+    print_msg(f"Resource Pack UUID: {rp_manifest['header']['uuid']}")
     print(f"\nNext steps:")
     print(f"  1. Edit files in {addon_path}")
     print(f"  2. Build to Dropbox: mcaddon build {addon_name}")
@@ -127,19 +201,14 @@ def init_addon(args):
 
 def build_addon(args):
     """Build addon into .mcaddon and .mcpack files"""
-    addon_path = Path(args.path) if args.path else ADDONS_DIR / args.name
-
-    if not addon_path.exists():
-        print_error(f"Addon not found: {addon_path}")
-        sys.exit(1)
-
+    addon_path = resolve_addon_path(args.name, args.path)
     addon_name = addon_path.name
-    print_header(f"Building addon: {addon_name}")
+    print_msg(f"Building addon: {addon_name}", "header")
 
     # Validate JSON files
-    print_info("Validating JSON files...")
-    validate_script = TOOLS_DIR / "validate-json.sh"
-    run_command([str(validate_script), str(addon_path)])
+    print_msg("Validating JSON files...")
+    if not validate_json_files(addon_path):
+        sys.exit(1)
 
     # Determine output directory
     if args.local:
@@ -148,18 +217,14 @@ def build_addon(args):
     else:
         output_dir = DROPBOX_DIR
         if not output_dir.exists():
-            print_info(f"Creating Dropbox Minecraft folder: {output_dir}")
+            print_msg(f"Creating Dropbox Minecraft folder: {output_dir}")
             output_dir.mkdir(parents=True, exist_ok=True)
 
     # Package addon
-    print_info(f"Packaging addon to {'Dropbox' if not args.local else 'local builds'}...")
-    package_script = TOOLS_DIR / "package-addon.sh"
-    output_file = run_command(
-        [str(package_script), str(addon_path), str(output_dir)],
-        capture=True
-    )
+    print_msg(f"Packaging addon to {'Dropbox' if not args.local else 'local builds'}...")
+    mcaddon_file = package_addon(addon_path, output_dir, addon_name)
 
-    print_success(f"Build complete: {output_file}")
+    print_msg(f"Build complete: {mcaddon_file}", "success")
 
     # List generated files
     print("\nGenerated files:")
@@ -171,76 +236,88 @@ def build_addon(args):
 
     # Check Dropbox sync status if building to Dropbox
     if not args.local:
-        dropbox_cli = subprocess.run(["which", "dropbox"], capture_output=True)
-        if dropbox_cli.returncode == 0:
-            print_info("Checking Dropbox sync status...")
-            status = run_command(["dropbox", "status"], capture=True, check=False)
-            if status and "Up to date" in status:
-                print_success("Dropbox sync complete!")
-            elif status and "Syncing" in status:
-                print_info("Syncing to Dropbox...")
-                # Wait for sync
-                for _ in range(10):
-                    time.sleep(2)
-                    status = run_command(["dropbox", "status"], capture=True, check=False)
-                    if status and "Up to date" in status:
-                        print_success("Dropbox sync complete!")
-                        break
-
+        check_dropbox_sync()
         print(f"\n{Colors.BOLD}On iPad:{Colors.RESET}")
         print("  1. Open Files app → Browse → Dropbox")
         print("  2. Navigate to Minecraft folder")
         print(f"  3. Tap '{addon_name}.mcaddon'")
         print("  4. Select 'Open in Minecraft'")
 
-    return output_file
+    return mcaddon_file
+
+def check_dropbox_sync(timeout: int = 20) -> None:
+    """Check Dropbox sync status and wait for completion"""
+    dropbox_cli = subprocess.run(["which", "dropbox"], capture_output=True)
+    if dropbox_cli.returncode != 0:
+        return
+
+    print_msg("Checking Dropbox sync status...")
+    status = run_command(["dropbox", "status"], capture=True, check=False)
+
+    if status and "Up to date" in status:
+        print_msg("Dropbox sync complete!", "success")
+        return
+
+    if status and "Syncing" in status:
+        print_msg("Syncing to Dropbox...")
+        for _ in range(timeout // 2):
+            time.sleep(2)
+            status = run_command(["dropbox", "status"], capture=True, check=False)
+            if status and "Up to date" in status:
+                print_msg("Dropbox sync complete!", "success")
+                return
+
+def get_file_mtimes(addon_path: Path) -> str:
+    """Get checksum of all file modification times using find command"""
+    result = subprocess.run(
+        ["find", str(addon_path), "-type", "f", "-exec", "stat", "-f", "%m %N", "{}", ";"],
+        capture_output=True, text=True, check=True
+    )
+    return result.stdout
 
 def watch_addon(args):
     """Watch addon directory and auto-rebuild on changes"""
-    addon_path = Path(args.path) if args.path else ADDONS_DIR / args.name
-
-    if not addon_path.exists():
-        print_error(f"Addon not found: {addon_path}")
-        sys.exit(1)
-
+    addon_path = resolve_addon_path(args.name, args.path)
     addon_name = addon_path.name
-    print_header(f"Watching addon: {addon_name}")
-    print_info(f"Path: {addon_path}")
-    print_info("Press Ctrl+C to stop\n")
+
+    print_msg(f"Watching addon: {addon_name}", "header")
+    print_msg(f"Path: {addon_path}")
+    print_msg("Press Ctrl+C to stop\n")
 
     # Initial build
-    build_addon(argparse.Namespace(name=addon_name, path=str(addon_path), local=args.local))
+    build_addon(args)
 
-    # Watch for changes using inotifywait
+    # Track file modification times
+    mtimes = get_file_mtimes(addon_path)
+
     try:
         while True:
-            cmd = [
-                "inotifywait",
-                "-r",
-                "-e", "modify,create,delete,move",
-                str(addon_path)
-            ]
-            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            time.sleep(2)  # Check every 2 seconds
 
-            print(f"\n{Colors.YELLOW}Change detected, rebuilding...{Colors.RESET}")
-            time.sleep(1)  # Debounce
-            build_addon(argparse.Namespace(name=addon_name, path=str(addon_path), local=args.local))
+            # Get current modification times
+            current_mtimes = get_file_mtimes(addon_path)
+
+            # Check for changes
+            if current_mtimes != mtimes:
+                print(f"\n{Colors.YELLOW}Change detected, rebuilding...{Colors.RESET}")
+                build_addon(args)
+                mtimes = current_mtimes
 
     except KeyboardInterrupt:
         print(f"\n{Colors.YELLOW}Stopped watching{Colors.RESET}")
 
 def list_addons(args):
     """List all addons"""
-    print_header("Available Addons")
+    print_msg("Available Addons", "header")
 
     if not ADDONS_DIR.exists():
-        print_info("No addons directory found")
+        print_msg("No addons directory found")
         return
 
     addons = [d for d in ADDONS_DIR.iterdir() if d.is_dir() and d.name not in ['tools', 'builds']]
 
     if not addons:
-        print_info("No addons found")
+        print_msg("No addons found")
         print(f"\nCreate one with: mcaddon init <name>")
         return
 
@@ -306,7 +383,6 @@ Examples:
 
     # Ensure directories exist
     ADDONS_DIR.mkdir(parents=True, exist_ok=True)
-    TOOLS_DIR.mkdir(parents=True, exist_ok=True)
 
     args.func(args)
 
