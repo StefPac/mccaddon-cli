@@ -268,12 +268,12 @@ def check_dropbox_sync(timeout: int = 20) -> None:
                 return
 
 def get_file_mtimes(addon_path: Path) -> str:
-    """Get checksum of all file modification times using find command"""
-    result = subprocess.run(
-        ["find", str(addon_path), "-type", "f", "-exec", "stat", "-f", "%m %N", "{}", ";"],
-        capture_output=True, text=True, check=True
-    )
-    return result.stdout
+    """Get a string of all file modification times for change detection"""
+    mtimes = []
+    for file_path in sorted(addon_path.rglob("*")):
+        if file_path.is_file():
+            mtimes.append(f"{file_path.stat().st_mtime} {file_path}")
+    return "\n".join(mtimes)
 
 def watch_addon(args):
     """Watch addon directory and auto-rebuild on changes"""
