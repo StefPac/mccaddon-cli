@@ -8,6 +8,7 @@ import argparse
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -271,8 +272,12 @@ def get_file_mtimes(addon_path: Path) -> str:
     """Get a string of all file modification times for change detection"""
     mtimes = []
     for file_path in sorted(addon_path.rglob("*")):
-        if file_path.is_file():
-            mtimes.append(f"{file_path.stat().st_mtime} {file_path}")
+        try:
+            st = file_path.stat()
+            if stat.S_ISREG(st.st_mode):
+                mtimes.append(f"{st.st_mtime} {file_path}")
+        except OSError:
+            pass  # Skip files that can't be accessed
     return "\n".join(mtimes)
 
 def watch_addon(args):
