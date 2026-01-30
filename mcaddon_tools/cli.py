@@ -8,6 +8,7 @@ import argparse
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -268,12 +269,16 @@ def check_dropbox_sync(timeout: int = 20) -> None:
                 return
 
 def get_file_mtimes(addon_path: Path) -> str:
-    """Get checksum of all file modification times using find command"""
-    result = subprocess.run(
-        ["find", str(addon_path), "-type", "f", "-exec", "stat", "-f", "%m %N", "{}", ";"],
-        capture_output=True, text=True, check=True
-    )
-    return result.stdout
+    """Get a string of all file modification times for change detection"""
+    mtimes = []
+    for file_path in sorted(addon_path.rglob("*")):
+        try:
+            st = file_path.stat()
+            if stat.S_ISREG(st.st_mode):
+                mtimes.append(f"{st.st_mtime} {file_path}")
+        except OSError:
+            pass  # Skip files that can't be accessed
+    return "\n".join(mtimes)
 
 def watch_addon(args):
     """Watch addon directory and auto-rebuild on changes"""
